@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Tracker RBAC</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>Project Tracker</h1>
+
+      <section id="authSection" class="card">
+        <h2>Authentication</h2>
+        <div class="row">
+          <input id="name" placeholder="Name (signup)" />
+          <input id="email" placeholder="Email" />
+          <input id="password" placeholder="Password" type="password" />
+          <select id="role">
+            <option value="MEMBER">Member</option>
+            <option value="ADMIN">Admin</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="signupBtn">Signup</button>
+          <button id="loginBtn">Login</button>
+          <button id="logoutBtn">Logout</button>
+        </div>
+        <p id="authInfo">Not logged in</p>
+      </section>
+
+      <section id="dashboardSection" class="card hidden">
+        <h2>Dashboard</h2>
+        <div id="summary" class="grid"></div>
+        <div>
+          <h3>Overdue Tasks</h3>
+          <ul id="overdueList"></ul>
+        </div>
+      </section>
+
+      <section id="adminSection" class="card hidden">
+        <h2>Admin: Create Project</h2>
+        <div class="row">
+          <input id="projectName" placeholder="Project name" />
+          <input id="projectDescription" placeholder="Project description" />
+          <button id="createProjectBtn">Create</button>
+        </div>
+        <h3>Project Team Management</h3>
+        <div class="row">
+          <select id="memberProjectSelect"></select>
+          <select id="memberUserSelect"></select>
+          <button id="addMemberBtn">Add Member</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="tasksSection">
+        <h2>Task Management</h2>
+        <label for="projectSelect">Project:</label>
+        <select id="projectSelect"></select>
+        <div class="row">
+          <input id="taskTitle" placeholder="Task title" />
+          <input id="taskDescription" placeholder="Description" />
+          <input id="taskDueDate" type="datetime-local" />
+          <select id="assigneeSelect"></select>
+          <button id="createTaskBtn">Add Task</button>
+        </div>
+        <h3>Tasks</h3>
+        <ul id="taskList"></ul>
+      </section>
+
+      <p id="message"></p>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+  </html>
