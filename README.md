@@ -87,7 +87,7 @@ App runs at `http://localhost:4000`.
 ## Submission
 
 - **Live URL:** `ADD_YOUR_RAILWAY_URL_HERE`
-- **GitHub Repo:** `ADD_YOUR_GITHUB_REPO_URL_HERE`
+- **GitHub Repo:** `https://github.com/Ujjwalkumarmerit/PROJECT-TRACKER`
 
 ## Notes
 
