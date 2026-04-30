@@ -1,95 +1,182 @@
-# Project Tracker RBAC App
+# ⚡ TaskFlow — Project & Task Manager with RBAC
 
-A full-stack web app where users can create projects, assign tasks, and track progress with role-based access (`ADMIN` / `MEMBER`).
+A full-stack web app for managing projects, assigning tasks, and tracking progress with role-based access control (Admin / Member).
 
-## Features
+---
 
-- Authentication: signup/login with JWT
-- Role-based access control:
-  - `ADMIN`: manage users, create projects, assign members, create/update all tasks
-  - `MEMBER`: view assigned projects, update status for own assigned tasks
-- Project and team management
-- Task creation, assignment, status tracking (`TODO`, `IN_PROGRESS`, `DONE`)
-- Dashboard with task summary and overdue task list
-- REST API + SQL database (SQLite via Prisma)
-- Input validation using Zod
+## 🚀 Live Demo
 
-## Tech Stack
+> Add your Railway URL here after deployment.
 
-- Backend: Node.js, Express
-- Database: PostgreSQL (Prisma ORM)
-- Auth: JWT + bcrypt
-- Frontend: Vanilla HTML/CSS/JavaScript (served by Express)
-- Deployment: Railway
+## 📦 GitHub Repo
 
-## Local Setup
+> Add your GitHub repo link here.
 
-1. Install dependencies
+---
+
+## ✨ Features
+
+### 🔐 Authentication
+- Signup & Login with JWT (7-day tokens)
+- Passwords hashed with bcrypt (12 rounds)
+- First registered user is automatically **Admin**
+
+### 👥 Role-Based Access Control
+
+| Action | Admin | Member |
+|---|:---:|:---:|
+| Create / edit / delete projects | ✅ | ❌ |
+| Add / remove project members | ✅ | ❌ |
+| Create tasks in their projects | ✅ | ✅ |
+| Edit task details (title, priority, assignee, due date) | ✅ | ❌ |
+| Update status on assigned tasks | ✅ | ✅ |
+| Delete tasks | ✅ | ❌ |
+| Manage users (role change, delete) | ✅ | ❌ |
+| View all projects | ✅ | Assigned only |
+
+### 📁 Project Management
+- Create, edit, delete projects
+- Add / remove team members per project
+- Progress bar (% of tasks done)
+- Overdue task count per project card
+
+### ✅ Task Management
+- Title, description, priority (Low / Medium / High), due date, assignee
+- Status: **To Do → In Progress → Done** (click the circle to cycle)
+- Filter tasks by status
+- Overdue highlighting
+
+### 📊 Dashboard
+- Stats: total, to-do, in-progress, done, overdue, projects, users (admin)
+- Overdue tasks list
+- Recent tasks list
+
+---
+
+## 🛠 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 18+ |
+| Framework | Express 4 |
+| ORM | Prisma 5 |
+| Database | PostgreSQL (Railway) |
+| Auth | JWT + bcryptjs |
+| Validation | Zod |
+| Frontend | Vanilla JS + HTML5 + CSS3 |
+
+---
+
+## ⚙️ Local Development
+
+### Prerequisites
+- Node.js 18+
+- PostgreSQL database
+
+### Setup
 
 ```bash
+# 1. Clone the repo
+git clone <your-repo-url>
+cd taskflow
+
+# 2. Install dependencies
 npm install
-```
 
-2. Set environment variables in `.env`
+# 3. Configure environment
+cp .env.example .env
+# Edit .env — set DATABASE_URL and JWT_SECRET
 
-```env
-DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DB_NAME?schema=public"
-JWT_SECRET="super_secret_change_me"
-```
-
-3. Sync schema
-
-```bash
+# 4. Push schema to database
 npx prisma db push
-```
 
-4. Start app
+# 5. Generate Prisma client
+npx prisma generate
 
-```bash
+# 6. Start dev server
 npm run dev
 ```
 
-App runs at `http://localhost:4000`.
+Open **http://localhost:4000**
 
-## API Endpoints
+### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET` | Long random secret for signing JWTs |
+| `PORT` | Server port (default: 4000) |
+
+---
+
+## 🌐 Deploy on Railway
+
+1. Push this repo to GitHub
+2. Go to [railway.app](https://railway.app) → **New Project**
+3. Add a **PostgreSQL** plugin to your project
+4. Deploy from your GitHub repo
+5. Set environment variables in Railway:
+   - `DATABASE_URL` → copy from the PostgreSQL plugin's **Connect** tab
+   - `JWT_SECRET` → any long random string
+6. Railway runs `npx prisma db push && node src/server.js` automatically on deploy
+
+---
+
+## 📡 REST API Reference
 
 ### Auth
-- `POST /api/auth/signup`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
+| Method | Endpoint | Auth | Description |
+|---|---|:---:|---|
+| POST | `/api/auth/signup` | — | Register |
+| POST | `/api/auth/login` | — | Login → JWT |
+| GET | `/api/auth/me` | ✅ | Current user |
 
-### Users (Admin)
-- `GET /api/users`
+### Users
+| Method | Endpoint | Auth | Description |
+|---|---|:---:|---|
+| GET | `/api/users` | ✅ | List all users |
+| PATCH | `/api/users/:id/role` | Admin | Change role |
+| DELETE | `/api/users/:id` | Admin | Delete user |
 
 ### Projects
-- `POST /api/projects` (Admin)
-- `GET /api/projects` (Admin/Member)
-- `POST /api/projects/:projectId/members` (Admin)
+| Method | Endpoint | Auth | Description |
+|---|---|:---:|---|
+| POST | `/api/projects` | Admin | Create project |
+| GET | `/api/projects` | ✅ | List accessible projects |
+| GET | `/api/projects/:id` | ✅ | Project detail |
+| PATCH | `/api/projects/:id` | Admin | Update project |
+| DELETE | `/api/projects/:id` | Admin | Delete project |
+| POST | `/api/projects/:id/members` | Admin | Add member |
+| DELETE | `/api/projects/:id/members/:uid` | Admin | Remove member |
 
 ### Tasks
-- `POST /api/projects/:projectId/tasks` (Admin/Member with access)
-- `PATCH /api/tasks/:taskId` (Admin all, Member status-only for own assigned task)
+| Method | Endpoint | Auth | Description |
+|---|---|:---:|---|
+| POST | `/api/projects/:id/tasks` | ✅ | Create task |
+| PATCH | `/api/tasks/:id` | ✅ | Update task |
+| DELETE | `/api/tasks/:id` | Admin | Delete task |
 
 ### Dashboard
-- `GET /api/dashboard`
+| Method | Endpoint | Auth | Description |
+|---|---|:---:|---|
+| GET | `/api/dashboard` | ✅ | Stats + overdue + recent |
 
-## Railway Deployment (Mandatory)
+---
 
-1. Push code to GitHub.
-2. Go to [Railway](https://railway.app/) and create a new project from your GitHub repo.
-3. Add environment variables in Railway:
-   - `DATABASE_URL` (Railway Postgres connection URL)
-   - `JWT_SECRET`
-4. Deploy. Railway uses `railway.json` start command:
-   - `npx prisma db push && npm start`
-5. Open the generated Railway domain.
+## 📂 Project Structure
 
-## Submission
-
-- **Live URL:** `ADD_YOUR_RAILWAY_URL_HERE`
-- **GitHub Repo:** `https://github.com/Ujjwalkumarmerit/PROJECT-TRACKER`
-
-## Notes
-
-- First signed-up account becomes `ADMIN` automatically.
-- Keep `.env` out of version control.
+```
+taskflow/
+├── prisma/
+│   └── schema.prisma        # DB schema (User, Project, ProjectMember, Task)
+├── public/
+│   ├── index.html           # Single-page app shell
+│   ├── app.js               # All frontend logic (~500 lines)
+│   └── styles.css           # All styles (~500 lines)
+├── src/
+│   └── server.js            # Express API + middleware
+├── .env                     # Local environment variables
+├── package.json
+├── railway.json             # Railway deploy config
+└── README.md
+```

@@ -1,75 +1,377 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Project Tracker RBAC</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="container">
-      <h1>Project Tracker</h1>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
 
-      <section id="authSection" class="card">
-        <h2>Authentication</h2>
-        <div class="row">
-          <input id="name" placeholder="Name (signup)" />
-          <input id="email" placeholder="Email" />
-          <input id="password" placeholder="Password" type="password" />
-          <select id="role">
-            <option value="MEMBER">Member</option>
-            <option value="ADMIN">Admin</option>
+<!-- ═══════════════════════════════════════════════════════════════
+     AUTH SCREEN
+════════════════════════════════════════════════════════════════ -->
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="brand">
+      <span class="brand-icon">⚡</span>
+      <span class="brand-name">TaskFlow</span>
+    </div>
+    <p class="brand-tagline">Project &amp; Task Management · Role-Based Access</p>
+
+    <div class="tab-bar">
+      <button class="tab active" id="tabLogin"  onclick="switchTab('login')">Login</button>
+      <button class="tab"        id="tabSignup" onclick="switchTab('signup')">Sign Up</button>
+    </div>
+
+    <!-- Login -->
+    <form id="loginForm" onsubmit="doLogin(event)">
+      <div class="field">
+        <label for="lEmail">Email</label>
+        <input id="lEmail" type="email" placeholder="you@example.com" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="lPass">Password</label>
+        <input id="lPass" type="password" placeholder="••••••••" required autocomplete="current-password" />
+      </div>
+      <button class="btn primary full" type="submit" id="loginBtn">Login</button>
+      <p class="form-err hidden" id="loginErr" role="alert"></p>
+    </form>
+
+    <!-- Signup -->
+    <form id="signupForm" class="hidden" onsubmit="doSignup(event)">
+      <div class="field">
+        <label for="sName">Full Name</label>
+        <input id="sName" type="text" placeholder="Jane Doe" required autocomplete="name" />
+      </div>
+      <div class="field">
+        <label for="sEmail">Email</label>
+        <input id="sEmail" type="email" placeholder="you@example.com" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="sPass">Password <span class="muted">(min 6 chars)</span></label>
+        <input id="sPass" type="password" placeholder="••••••••" required autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <label for="sRole">Role</label>
+        <select id="sRole">
+          <option value="MEMBER">Member</option>
+          <option value="ADMIN">Admin</option>
+        </select>
+      </div>
+      <button class="btn primary full" type="submit" id="signupBtn">Create Account</button>
+      <p class="form-err hidden" id="signupErr" role="alert"></p>
+      <p class="form-ok  hidden" id="signupOk"  role="status"></p>
+    </form>
+
+    <p class="auth-note">First registered account is automatically Admin.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     APP SHELL
+════════════════════════════════════════════════════════════════ -->
+<div id="app" class="app hidden">
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-top">
+      <span class="brand-icon">⚡</span>
+      <span class="brand-name">TaskFlow</span>
+      <button class="close-sidebar" onclick="closeSidebar()" aria-label="Close menu">✕</button>
+    </div>
+
+    <nav class="nav">
+      <a class="nav-link active" data-view="dashboard" onclick="goto('dashboard')">
+        <span>📊</span> Dashboard
+      </a>
+      <a class="nav-link" data-view="projects" onclick="goto('projects')">
+        <span>📁</span> Projects
+      </a>
+      <a class="nav-link" data-view="mytasks" onclick="goto('mytasks')">
+        <span>✅</span> My Tasks
+      </a>
+      <a class="nav-link admin-gate hidden" data-view="users" onclick="goto('users')">
+        <span>👥</span> Users
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="me-info">
+        <div class="avatar" id="meAvatar">?</div>
+        <div>
+          <div class="me-name" id="meName">—</div>
+          <div class="me-role" id="meRole">—</div>
+        </div>
+      </div>
+      <button class="btn ghost sm" onclick="doLogout()">Logout</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" onclick="openSidebar()" aria-label="Open menu">☰</button>
+      <h1 class="view-title" id="viewTitle">Dashboard</h1>
+      <span class="role-pill" id="rolePill">MEMBER</span>
+    </header>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <div class="content">
+
+      <!-- ── DASHBOARD ─────────────────────────────────────── -->
+      <section id="viewDashboard" class="view active">
+        <div class="stat-grid" id="statGrid"></div>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-head">
+              <h2>Overdue Tasks</h2>
+              <span class="pill danger" id="overdueCount">0</span>
+            </div>
+            <div id="overdueList" class="simple-list">
+              <p class="empty">No overdue tasks 🎉</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Recent Tasks</h2></div>
+            <div id="recentList" class="simple-list">
+              <p class="empty">No tasks yet.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── PROJECTS ──────────────────────────────────────── -->
+      <section id="viewProjects" class="view hidden">
+        <div class="view-actions">
+          <div></div>
+          <button class="btn primary admin-gate hidden" onclick="openModal('modalCreateProject')">+ New Project</button>
+        </div>
+        <div id="projectGrid" class="project-grid"></div>
+      </section>
+
+      <!-- ── PROJECT DETAIL ────────────────────────────────── -->
+      <section id="viewDetail" class="view hidden">
+        <div class="view-actions">
+          <button class="btn ghost" onclick="goto('projects')">← Back</button>
+          <div class="row-gap admin-gate hidden">
+            <button class="btn secondary" onclick="openEditProject()">Edit</button>
+            <button class="btn danger"    onclick="deleteProject()">Delete</button>
+          </div>
+        </div>
+        <div class="card project-header" id="projectHeader"></div>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-head">
+              <h2>Tasks</h2>
+              <button class="btn primary sm" onclick="openModal('modalCreateTask')">+ Add Task</button>
+            </div>
+            <div class="filter-bar" id="taskFilterBar">
+              <button class="filter active" data-f="ALL"         onclick="setTaskFilter(this)">All</button>
+              <button class="filter"        data-f="TODO"        onclick="setTaskFilter(this)">To Do</button>
+              <button class="filter"        data-f="IN_PROGRESS" onclick="setTaskFilter(this)">In Progress</button>
+              <button class="filter"        data-f="DONE"        onclick="setTaskFilter(this)">Done</button>
+            </div>
+            <div id="taskList" class="task-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h2>Members</h2>
+              <button class="btn secondary sm admin-gate hidden" onclick="openAddMember()">+ Add</button>
+            </div>
+            <div id="memberList" class="member-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── MY TASKS ──────────────────────────────────────── -->
+      <section id="viewMytasks" class="view hidden">
+        <div class="filter-bar" id="myTaskFilterBar">
+          <button class="filter active" data-f="ALL"         onclick="setMyTaskFilter(this)">All</button>
+          <button class="filter"        data-f="TODO"        onclick="setMyTaskFilter(this)">To Do</button>
+          <button class="filter"        data-f="IN_PROGRESS" onclick="setMyTaskFilter(this)">In Progress</button>
+          <button class="filter"        data-f="DONE"        onclick="setMyTaskFilter(this)">Done</button>
+        </div>
+        <div id="myTaskList" class="task-list mt12"></div>
+      </section>
+
+      <!-- ── USERS ─────────────────────────────────────────── -->
+      <section id="viewUsers" class="view hidden">
+        <div class="card">
+          <div class="card-head">
+            <h2>All Users</h2>
+            <span class="pill info" id="userCountPill">0</span>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="userTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MODALS
+════════════════════════════════════════════════════════════════ -->
+
+<!-- Create Project -->
+<div id="modalCreateProject" class="overlay hidden" onclick="overlayClose(event,'modalCreateProject')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mCPTitle">
+    <div class="modal-head">
+      <h3 id="mCPTitle">New Project</h3>
+      <button class="modal-x" onclick="closeModal('modalCreateProject')" aria-label="Close">✕</button>
+    </div>
+    <form onsubmit="submitCreateProject(event)">
+      <div class="field"><label>Name *</label><input id="cpName" type="text" required maxlength="100" /></div>
+      <div class="field"><label>Description</label><textarea id="cpDesc" rows="3" maxlength="500"></textarea></div>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" onclick="closeModal('modalCreateProject')">Cancel</button>
+        <button type="submit" class="btn primary">Create</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Project -->
+<div id="modalEditProject" class="overlay hidden" onclick="overlayClose(event,'modalEditProject')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mEPTitle">
+    <div class="modal-head">
+      <h3 id="mEPTitle">Edit Project</h3>
+      <button class="modal-x" onclick="closeModal('modalEditProject')" aria-label="Close">✕</button>
+    </div>
+    <form onsubmit="submitEditProject(event)">
+      <div class="field"><label>Name *</label><input id="epName" type="text" required maxlength="100" /></div>
+      <div class="field"><label>Description</label><textarea id="epDesc" rows="3" maxlength="500"></textarea></div>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" onclick="closeModal('modalEditProject')">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Create Task -->
+<div id="modalCreateTask" class="overlay hidden" onclick="overlayClose(event,'modalCreateTask')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mCTTitle">
+    <div class="modal-head">
+      <h3 id="mCTTitle">New Task</h3>
+      <button class="modal-x" onclick="closeModal('modalCreateTask')" aria-label="Close">✕</button>
+    </div>
+    <form onsubmit="submitCreateTask(event)">
+      <div class="field"><label>Title *</label><input id="ctTitle" type="text" required maxlength="120" /></div>
+      <div class="field"><label>Description</label><textarea id="ctDesc" rows="2" maxlength="500"></textarea></div>
+      <div class="field-row">
+        <div class="field">
+          <label>Priority</label>
+          <select id="ctPriority">
+            <option value="LOW">Low</option>
+            <option value="MEDIUM" selected>Medium</option>
+            <option value="HIGH">High</option>
           </select>
         </div>
-        <div class="row">
-          <button id="signupBtn">Signup</button>
-          <button id="loginBtn">Login</button>
-          <button id="logoutBtn">Logout</button>
+        <div class="field">
+          <label>Due Date</label>
+          <input id="ctDue" type="datetime-local" />
         </div>
-        <p id="authInfo">Not logged in</p>
-      </section>
+      </div>
+      <div class="field">
+        <label>Assign To</label>
+        <select id="ctAssignee"><option value="">Unassigned</option></select>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" onclick="closeModal('modalCreateTask')">Cancel</button>
+        <button type="submit" class="btn primary">Add Task</button>
+      </div>
+    </form>
+  </div>
+</div>
 
-      <section id="dashboardSection" class="card hidden">
-        <h2>Dashboard</h2>
-        <div id="summary" class="grid"></div>
-        <div>
-          <h3>Overdue Tasks</h3>
-          <ul id="overdueList"></ul>
-        </div>
-      </section>
-
-      <section id="adminSection" class="card hidden">
-        <h2>Admin: Create Project</h2>
-        <div class="row">
-          <input id="projectName" placeholder="Project name" />
-          <input id="projectDescription" placeholder="Project description" />
-          <button id="createProjectBtn">Create</button>
-        </div>
-        <h3>Project Team Management</h3>
-        <div class="row">
-          <select id="memberProjectSelect"></select>
-          <select id="memberUserSelect"></select>
-          <button id="addMemberBtn">Add Member</button>
-        </div>
-      </section>
-
-      <section class="card hidden" id="tasksSection">
-        <h2>Task Management</h2>
-        <label for="projectSelect">Project:</label>
-        <select id="projectSelect"></select>
-        <div class="row">
-          <input id="taskTitle" placeholder="Task title" />
-          <input id="taskDescription" placeholder="Description" />
-          <input id="taskDueDate" type="datetime-local" />
-          <select id="assigneeSelect"></select>
-          <button id="createTaskBtn">Add Task</button>
-        </div>
-        <h3>Tasks</h3>
-        <ul id="taskList"></ul>
-      </section>
-
-      <p id="message"></p>
+<!-- Edit Task -->
+<div id="modalEditTask" class="overlay hidden" onclick="overlayClose(event,'modalEditTask')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mETTitle">
+    <div class="modal-head">
+      <h3 id="mETTitle">Edit Task</h3>
+      <button class="modal-x" onclick="closeModal('modalEditTask')" aria-label="Close">✕</button>
     </div>
-    <script src="/app.js"></script>
-  </body>
-  </html>
+    <form onsubmit="submitEditTask(event)">
+      <input type="hidden" id="etId" />
+      <div class="field admin-gate hidden" id="etTitleField">
+        <label>Title *</label>
+        <input id="etTitle" type="text" required maxlength="120" />
+      </div>
+      <div class="field admin-gate hidden" id="etDescField">
+        <label>Description</label>
+        <textarea id="etDesc" rows="2" maxlength="500"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Status</label>
+          <select id="etStatus">
+            <option value="TODO">To Do</option>
+            <option value="IN_PROGRESS">In Progress</option>
+            <option value="DONE">Done</option>
+          </select>
+        </div>
+        <div class="field admin-gate hidden" id="etPriorityField">
+          <label>Priority</label>
+          <select id="etPriority">
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row admin-gate hidden" id="etAdminRow">
+        <div class="field">
+          <label>Due Date</label>
+          <input id="etDue" type="datetime-local" />
+        </div>
+        <div class="field">
+          <label>Assign To</label>
+          <select id="etAssignee"><option value="">Unassigned</option></select>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" onclick="closeModal('modalEditTask')">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add Member -->
+<div id="modalAddMember" class="overlay hidden" onclick="overlayClose(event,'modalAddMember')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mAMTitle">
+    <div class="modal-head">
+      <h3 id="mAMTitle">Add Member</h3>
+      <button class="modal-x" onclick="closeModal('modalAddMember')" aria-label="Close">✕</button>
+    </div>
+    <form onsubmit="submitAddMember(event)">
+      <div class="field">
+        <label>Select User</label>
+        <select id="amUser" required><option value="">Choose…</option></select>
+      </div>
+      <p class="form-err hidden" id="amErr">All users are already members.</p>
+      <div class="modal-foot">
+        <button type="button" class="btn ghost" onclick="closeModal('modalAddMember')">Cancel</button>
+        <button type="submit" class="btn primary" id="amSubmit">Add</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

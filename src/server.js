@@ -1,331 +1,398 @@
+"use strict";
 require("dotenv").config();
-const path = require("path");
+
+const path    = require("path");
 const express = require("express");
-const cors = require("cors");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const { z } = require("zod");
+const cors    = require("cors");
+const bcrypt  = require("bcryptjs");
+const jwt     = require("jsonwebtoken");
+const { z }   = require("zod");
 const { PrismaClient } = require("@prisma/client");
 
-const app = express();
+const app    = express();
 const prisma = new PrismaClient();
+const PORT   = process.env.PORT || 4000;
+const SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
-const PORT = process.env.PORT || 4000;
-const JWT_SECRET = process.env.JWT_SECRET || "change_this_in_production";
-const ROLE = { ADMIN: "ADMIN", MEMBER: "MEMBER" };
-const TASK_STATUS = { TODO: "TODO", IN_PROGRESS: "IN_PROGRESS", DONE: "DONE" };
-
+// ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-const signupSchema = z.object({
-  name: z.string().min(2).max(80),
-  email: z.string().email(),
-  password: z.string().min(6),
-  role: z.enum([ROLE.ADMIN, ROLE.MEMBER]).optional()
-});
+// ─── Zod Schemas ─────────────────────────────────────────────────────────────
+const S = {
+  signup: z.object({
+    name:     z.string().min(2).max(80),
+    email:    z.string().email(),
+    password: z.string().min(6),
+    role:     z.enum(["ADMIN","MEMBER"]).optional()
+  }),
+  login: z.object({
+    email:    z.string().email(),
+    password: z.string().min(1)
+  }),
+  project: z.object({
+    name:        z.string().min(2).max(100),
+    description: z.string().max(500).optional()
+  }),
+  task: z.object({
+    title:       z.string().min(2).max(120),
+    description: z.string().max(500).optional(),
+    priority:    z.enum(["LOW","MEDIUM","HIGH"]).optional(),
+    assigneeId:  z.string().optional(),
+    dueDate:     z.string().optional()
+  }),
+  taskUpdate: z.object({
+    title:       z.string().min(2).max(120).optional(),
+    description: z.string().max(500).nullable().optional(),
+    status:      z.enum(["TODO","IN_PROGRESS","DONE"]).optional(),
+    priority:    z.enum(["LOW","MEDIUM","HIGH"]).optional(),
+    assigneeId:  z.string().nullable().optional(),
+    dueDate:     z.string().nullable().optional()
+  }),
+  role: z.object({ role: z.enum(["ADMIN","MEMBER"]) }),
+  member: z.object({ userId: z.string().min(1) })
+};
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1)
-});
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const err = (res, status, msg) => res.status(status).json({ error: msg });
 
-const createProjectSchema = z.object({
-  name: z.string().min(2).max(100),
-  description: z.string().max(500).optional(),
-  memberIds: z.array(z.string()).optional()
-});
-
-const createTaskSchema = z.object({
-  title: z.string().min(2).max(120),
-  description: z.string().max(500).optional(),
-  assigneeId: z.string().optional(),
-  dueDate: z.string().datetime().optional()
-});
-
-const updateTaskSchema = z.object({
-  title: z.string().min(2).max(120).optional(),
-  description: z.string().max(500).optional(),
-  assigneeId: z.string().nullable().optional(),
-  dueDate: z.string().datetime().nullable().optional(),
-  status: z.enum([TASK_STATUS.TODO, TASK_STATUS.IN_PROGRESS, TASK_STATUS.DONE]).optional()
-});
-
-function sendError(res, status, message) {
-  return res.status(status).json({ error: message });
+function parseDate(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
 }
 
-function getToken(req) {
-  const auth = req.headers.authorization || "";
-  if (!auth.startsWith("Bearer ")) return null;
-  return auth.slice(7);
-}
-
-async function auth(req, res, next) {
+// ─── Auth Middleware ──────────────────────────────────────────────────────────
+async function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  if (!header.startsWith("Bearer ")) return err(res, 401, "No token provided");
   try {
-    const token = getToken(req);
-    if (!token) return sendError(res, 401, "Missing token");
-    const payload = jwt.verify(token, JWT_SECRET);
-    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-    if (!user) return sendError(res, 401, "Invalid user");
+    const payload = jwt.verify(header.slice(7), SECRET);
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user) return err(res, 401, "User not found");
     req.user = user;
-    return next();
-  } catch (err) {
-    return sendError(res, 401, "Unauthorized");
+    next();
+  } catch {
+    return err(res, 401, "Invalid or expired token");
   }
 }
 
 function requireAdmin(req, res, next) {
-  if (req.user.role !== ROLE.ADMIN) {
-    return sendError(res, 403, "Admin only");
-  }
-  return next();
+  if (req.user.role !== "ADMIN") return err(res, 403, "Admins only");
+  next();
 }
 
-async function canAccessProject(userId, role, projectId) {
-  if (role === ROLE.ADMIN) return true;
-  const membership = await prisma.projectMember.findFirst({
-    where: { userId, projectId }
+async function requireProjectAccess(req, res, next) {
+  const { projectId } = req.params;
+  if (req.user.role === "ADMIN") return next();
+  const m = await prisma.projectMember.findUnique({
+    where: { projectId_userId: { projectId, userId: req.user.id } }
   });
-  return Boolean(membership);
+  if (!m) return err(res, 403, "Not a member of this project");
+  next();
 }
 
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
 app.post("/api/auth/signup", async (req, res) => {
   try {
-    const parsed = signupSchema.parse(req.body);
-    const exists = await prisma.user.findUnique({ where: { email: parsed.email } });
-    if (exists) return sendError(res, 400, "Email already in use");
+    const body = S.signup.parse(req.body);
+    const exists = await prisma.user.findUnique({ where: { email: body.email } });
+    if (exists) return err(res, 409, "Email already registered");
 
-    const usersCount = await prisma.user.count();
-    const role = usersCount === 0 ? ROLE.ADMIN : parsed.role || ROLE.MEMBER;
-    const passwordHash = await bcrypt.hash(parsed.password, 10);
+    const count = await prisma.user.count();
+    const role  = count === 0 ? "ADMIN" : (body.role || "MEMBER");
+    const hash  = await bcrypt.hash(body.password, 12);
 
     const user = await prisma.user.create({
-      data: {
-        name: parsed.name,
-        email: parsed.email,
-        passwordHash,
-        role
-      }
+      data: { name: body.name, email: body.email, passwordHash: hash, role },
+      select: { id: true, name: true, email: true, role: true }
     });
-
-    return res.status(201).json({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role
-    });
-  } catch (err) {
-    if (err instanceof z.ZodError) return sendError(res, 400, err.issues[0].message);
-    return sendError(res, 500, "Signup failed");
+    res.status(201).json(user);
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Signup failed");
   }
 });
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const parsed = loginSchema.parse(req.body);
-    const user = await prisma.user.findUnique({ where: { email: parsed.email } });
-    if (!user) return sendError(res, 401, "Invalid credentials");
-    const ok = await bcrypt.compare(parsed.password, user.passwordHash);
-    if (!ok) return sendError(res, 401, "Invalid credentials");
+    const body = S.login.parse(req.body);
+    const user = await prisma.user.findUnique({ where: { email: body.email } });
+    if (!user) return err(res, 401, "Invalid email or password");
+    const ok = await bcrypt.compare(body.password, user.passwordHash);
+    if (!ok) return err(res, 401, "Invalid email or password");
 
-    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
-    return res.json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
-    });
-  } catch (err) {
-    if (err instanceof z.ZodError) return sendError(res, 400, err.issues[0].message);
-    return sendError(res, 500, "Login failed");
+    const token = jwt.sign({ sub: user.id, role: user.role }, SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Login failed");
   }
 });
 
-app.get("/api/auth/me", auth, async (req, res) => {
-  return res.json({
-    id: req.user.id,
-    name: req.user.name,
-    email: req.user.email,
-    role: req.user.role
-  });
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  const { id, name, email, role } = req.user;
+  res.json({ id, name, email, role });
 });
 
-app.get("/api/users", auth, requireAdmin, async (req, res) => {
+// ─── USERS ────────────────────────────────────────────────────────────────────
+app.get("/api/users", requireAuth, async (req, res) => {
   const users = await prisma.user.findMany({
-    select: { id: true, name: true, email: true, role: true },
-    orderBy: { createdAt: "desc" }
+    select: { id: true, name: true, email: true, role: true, createdAt: true },
+    orderBy: { createdAt: "asc" }
   });
-  return res.json(users);
+  res.json(users);
 });
 
-app.post("/api/projects", auth, requireAdmin, async (req, res) => {
+app.patch("/api/users/:id/role", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const parsed = createProjectSchema.parse(req.body);
-    const project = await prisma.project.create({
-      data: {
-        name: parsed.name,
-        description: parsed.description,
-        createdById: req.user.id,
-        members: parsed.memberIds?.length
-          ? { create: parsed.memberIds.map((id) => ({ userId: id })) }
-          : undefined
-      },
-      include: {
-        members: { include: { user: { select: { id: true, name: true, email: true, role: true } } } }
-      }
+    const { role } = S.role.parse(req.body);
+    if (req.params.id === req.user.id) return err(res, 400, "Cannot change your own role");
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { role },
+      select: { id: true, name: true, email: true, role: true }
     });
-    return res.status(201).json(project);
-  } catch (err) {
-    if (err instanceof z.ZodError) return sendError(res, 400, err.issues[0].message);
-    return sendError(res, 500, "Project creation failed");
+    res.json(user);
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Role update failed");
   }
 });
 
-app.get("/api/projects", auth, async (req, res) => {
-  const where =
-    req.user.role === ROLE.ADMIN
-      ? {}
-      : {
-          members: { some: { userId: req.user.id } }
-        };
+app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  if (req.params.id === req.user.id) return err(res, 400, "Cannot delete yourself");
+  try {
+    await prisma.user.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch {
+    err(res, 500, "Delete failed");
+  }
+});
 
+// ─── PROJECTS ─────────────────────────────────────────────────────────────────
+const projectInclude = {
+  owner:   { select: { id: true, name: true } },
+  members: { include: { user: { select: { id: true, name: true, email: true, role: true } } } },
+  tasks:   { include: { assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } }
+};
+
+app.post("/api/projects", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const body = S.project.parse(req.body);
+    const project = await prisma.project.create({
+      data: { name: body.name, description: body.description, ownerId: req.user.id },
+      include: projectInclude
+    });
+    res.status(201).json(project);
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Could not create project");
+  }
+});
+
+app.get("/api/projects", requireAuth, async (req, res) => {
+  const where = req.user.role === "ADMIN"
+    ? {}
+    : { members: { some: { userId: req.user.id } } };
   const projects = await prisma.project.findMany({
     where,
-    include: {
-      members: { include: { user: { select: { id: true, name: true, email: true, role: true } } } },
-      tasks: true
-    },
+    include: projectInclude,
     orderBy: { createdAt: "desc" }
   });
-  return res.json(projects);
+  res.json(projects);
 });
 
-app.post("/api/projects/:projectId/members", auth, requireAdmin, async (req, res) => {
-  const bodySchema = z.object({ userId: z.string() });
+app.get("/api/projects/:projectId", requireAuth, requireProjectAccess, async (req, res) => {
+  const project = await prisma.project.findUnique({
+    where: { id: req.params.projectId },
+    include: projectInclude
+  });
+  if (!project) return err(res, 404, "Project not found");
+  res.json(project);
+});
+
+app.patch("/api/projects/:projectId", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { userId } = bodySchema.parse(req.body);
-    const { projectId } = req.params;
-    await prisma.projectMember.create({
-      data: { projectId, userId }
+    const body = S.project.partial().parse(req.body);
+    const project = await prisma.project.update({
+      where: { id: req.params.projectId },
+      data: body,
+      include: projectInclude
     });
-    return res.status(201).json({ success: true });
-  } catch (err) {
-    if (err instanceof z.ZodError) return sendError(res, 400, err.issues[0].message);
-    return sendError(res, 500, "Could not add member");
+    res.json(project);
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Update failed");
   }
 });
 
-app.post("/api/projects/:projectId/tasks", auth, async (req, res) => {
+app.delete("/api/projects/:projectId", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { projectId } = req.params;
-    const allowed = await canAccessProject(req.user.id, req.user.role, projectId);
-    if (!allowed) return sendError(res, 403, "Not allowed in this project");
+    await prisma.project.delete({ where: { id: req.params.projectId } });
+    res.json({ ok: true });
+  } catch {
+    err(res, 500, "Delete failed");
+  }
+});
 
-    const parsed = createTaskSchema.parse(req.body);
+// ─── PROJECT MEMBERS ──────────────────────────────────────────────────────────
+app.post("/api/projects/:projectId/members", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = S.member.parse(req.body);
+    const { projectId } = req.params;
+    const already = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId } }
+    });
+    if (already) return err(res, 409, "User is already a member");
+    await prisma.projectMember.create({ data: { projectId, userId } });
+    res.status(201).json({ ok: true });
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Could not add member");
+  }
+});
+
+app.delete("/api/projects/:projectId/members/:userId", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await prisma.projectMember.delete({
+      where: { projectId_userId: { projectId: req.params.projectId, userId: req.params.userId } }
+    });
+    res.json({ ok: true });
+  } catch {
+    err(res, 500, "Could not remove member");
+  }
+});
+
+// ─── TASKS ────────────────────────────────────────────────────────────────────
+app.post("/api/projects/:projectId/tasks", requireAuth, requireProjectAccess, async (req, res) => {
+  try {
+    const body = S.task.parse(req.body);
     const task = await prisma.task.create({
       data: {
-        projectId,
-        title: parsed.title,
-        description: parsed.description,
-        assigneeId: parsed.assigneeId,
-        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : null,
-        createdById: req.user.id
-      }
+        title:       body.title,
+        description: body.description,
+        priority:    body.priority || "MEDIUM",
+        assigneeId:  body.assigneeId || null,
+        dueDate:     parseDate(body.dueDate),
+        projectId:   req.params.projectId,
+        creatorId:   req.user.id
+      },
+      include: { assignee: { select: { id: true, name: true } } }
     });
-    return res.status(201).json(task);
-  } catch (err) {
-    if (err instanceof z.ZodError) return sendError(res, 400, err.issues[0].message);
-    return sendError(res, 500, "Task creation failed");
+    res.status(201).json(task);
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Could not create task");
   }
 });
 
-app.patch("/api/tasks/:taskId", auth, async (req, res) => {
+app.patch("/api/tasks/:taskId", requireAuth, async (req, res) => {
   try {
-    const { taskId } = req.params;
-    const parsed = updateTaskSchema.parse(req.body);
-    const task = await prisma.task.findUnique({ where: { id: taskId } });
-    if (!task) return sendError(res, 404, "Task not found");
+    const body = S.taskUpdate.parse(req.body);
+    const task = await prisma.task.findUnique({ where: { id: req.params.taskId } });
+    if (!task) return err(res, 404, "Task not found");
 
-    const allowedProject = await canAccessProject(req.user.id, req.user.role, task.projectId);
-    if (!allowedProject) return sendError(res, 403, "Not allowed in this project");
-
-    if (req.user.role === ROLE.MEMBER) {
-      const updatingOtherFields =
-        parsed.title || parsed.description || parsed.assigneeId !== undefined || parsed.dueDate !== undefined;
-      if (updatingOtherFields) {
-        return sendError(res, 403, "Members can only update task status");
-      }
-      if (task.assigneeId !== req.user.id) {
-        return sendError(res, 403, "Only assignee can update this task");
-      }
+    // Check project access
+    if (req.user.role !== "ADMIN") {
+      const m = await prisma.projectMember.findUnique({
+        where: { projectId_userId: { projectId: task.projectId, userId: req.user.id } }
+      });
+      if (!m) return err(res, 403, "Not a member of this project");
+      // Members can only update status on their own assigned tasks
+      const adminFields = ["title","description","priority","assigneeId","dueDate"];
+      const hasAdminField = adminFields.some(f => body[f] !== undefined);
+      if (hasAdminField) return err(res, 403, "Members can only update task status");
+      if (task.assigneeId !== req.user.id) return err(res, 403, "You can only update tasks assigned to you");
     }
 
     const updated = await prisma.task.update({
-      where: { id: taskId },
+      where: { id: req.params.taskId },
       data: {
-        title: parsed.title,
-        description: parsed.description,
-        status: parsed.status,
-        assigneeId: parsed.assigneeId === undefined ? undefined : parsed.assigneeId,
-        dueDate: parsed.dueDate === undefined ? undefined : parsed.dueDate ? new Date(parsed.dueDate) : null
-      }
+        ...(body.title       !== undefined && { title: body.title }),
+        ...(body.description !== undefined && { description: body.description }),
+        ...(body.status      !== undefined && { status: body.status }),
+        ...(body.priority    !== undefined && { priority: body.priority }),
+        ...(body.assigneeId  !== undefined && { assigneeId: body.assigneeId }),
+        ...(body.dueDate     !== undefined && { dueDate: parseDate(body.dueDate) })
+      },
+      include: { assignee: { select: { id: true, name: true } } }
     });
-    return res.json(updated);
-  } catch (err) {
-    if (err instanceof z.ZodError) return sendError(res, 400, err.issues[0].message);
-    return sendError(res, 500, "Task update failed");
+    res.json(updated);
+  } catch (e) {
+    if (e instanceof z.ZodError) return err(res, 400, e.errors[0].message);
+    err(res, 500, "Update failed");
   }
 });
 
-app.get("/api/dashboard", auth, async (req, res) => {
-  const projectIds =
-    req.user.role === ROLE.ADMIN
-      ? undefined
-      : (
-          await prisma.projectMember.findMany({
-            where: { userId: req.user.id },
-            select: { projectId: true }
-          })
-        ).map((p) => p.projectId);
+app.delete("/api/tasks/:taskId", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await prisma.task.delete({ where: { id: req.params.taskId } });
+    res.json({ ok: true });
+  } catch {
+    err(res, 500, "Delete failed");
+  }
+});
 
-  const baseWhere =
-    req.user.role === ROLE.ADMIN
-      ? {}
-      : {
-          projectId: { in: projectIds.length ? projectIds : [""] }
-        };
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+app.get("/api/dashboard", requireAuth, async (req, res) => {
+  const isAdmin = req.user.role === "ADMIN";
 
-  const tasks = await prisma.task.findMany({
-    where: baseWhere,
-    include: {
-      assignee: { select: { id: true, name: true } },
-      project: { select: { id: true, name: true } }
-    }
-  });
+  // Determine which project IDs this user can see
+  let projectIds;
+  if (!isAdmin) {
+    const memberships = await prisma.projectMember.findMany({
+      where: { userId: req.user.id },
+      select: { projectId: true }
+    });
+    projectIds = memberships.map(m => m.projectId);
+  }
 
-  const now = new Date();
-  const summary = {
-    total: tasks.length,
-    todo: tasks.filter((t) => t.status === TASK_STATUS.TODO).length,
-    inProgress: tasks.filter((t) => t.status === TASK_STATUS.IN_PROGRESS).length,
-    done: tasks.filter((t) => t.status === TASK_STATUS.DONE).length,
-    overdue: tasks.filter((t) => t.dueDate && t.status !== TASK_STATUS.DONE && t.dueDate < now).length
+  const taskWhere = isAdmin ? {} : {
+    projectId: { in: projectIds.length ? projectIds : ["__none__"] }
   };
 
-  return res.json({
-    summary,
-    overdueTasks: tasks.filter((t) => t.dueDate && t.status !== TASK_STATUS.DONE && t.dueDate < now)
+  const [tasks, projectCount, userCount] = await Promise.all([
+    prisma.task.findMany({
+      where: taskWhere,
+      include: {
+        project:  { select: { id: true, name: true } },
+        assignee: { select: { id: true, name: true } }
+      },
+      orderBy: { createdAt: "desc" }
+    }),
+    isAdmin
+      ? prisma.project.count()
+      : Promise.resolve(projectIds ? projectIds.length : 0),
+    isAdmin ? prisma.user.count() : Promise.resolve(null)
+  ]);
+
+  const now = new Date();
+  const overdue = tasks.filter(t => t.dueDate && t.status !== "DONE" && new Date(t.dueDate) < now);
+
+  res.json({
+    stats: {
+      total:      tasks.length,
+      todo:       tasks.filter(t => t.status === "TODO").length,
+      inProgress: tasks.filter(t => t.status === "IN_PROGRESS").length,
+      done:       tasks.filter(t => t.status === "DONE").length,
+      overdue:    overdue.length,
+      projects:   projectCount,
+      ...(userCount !== null ? { users: userCount } : {})
+    },
+    overdueTasks: overdue.slice(0, 10),
+    recentTasks:  tasks.slice(0, 10)
   });
 });
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
-});
+// ─── HEALTH ───────────────────────────────────────────────────────────────────
+app.get("/api/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
-app.get(/.*/, (_req, res) => {
+// ─── SPA FALLBACK ─────────────────────────────────────────────────────────────
+app.get(/^\/(?!api).*/, (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// ─── START ────────────────────────────────────────────────────────────────────
+app.listen(PORT, () => console.log(`TaskFlow running → http://localhost:${PORT}`));
